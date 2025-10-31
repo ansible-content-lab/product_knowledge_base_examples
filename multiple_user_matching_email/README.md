@@ -27,7 +27,7 @@ First, you need to create a Project in AAP to pull the diagnostic playbook from 
     * **Name:** `AAP Multiple Matching Users by Email`
     * **Organization:** Select your default organization.
     * **Source Control Type:** Select `Git`.
-    * **Source Control URL:** `https://github.com/ansible-content-lab/product_knowledge_base_examples`
+    * **Source Control URL:** `https://github.com/ansible-content-lab/product_knowledge_base_examples/`
     * **Source Control Branch/Tag/Ref:** Leave as-is (it will default to `main`).
     * **Source Control Credential:** Leave blank; this repository is public.
 5.  Click **Save**.
