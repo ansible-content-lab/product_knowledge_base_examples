@@ -64,5 +64,6 @@ Now you are ready to run the diagnostic test.
 
 * **Next Steps:**
     1.  Review the job output log. The playbook is designed to show *which* users in the system have a record with at least 2 matching email.
-    2.  Use the output to decide on which steps to take when consolidating the user records as per the article
-    3.  Note: Blank email address will show as duplicates as well and can be ignored
+        * **Note:** Depending on how you retrieve the csv output from the job logs, you may need to remove extraneous characters for the output to be readable in a text file
+    3.  Use the output to decide on which steps to take when consolidating the user records as per the article
+    4.  Note: Blank email address will show as duplicates as well and can be ignored
