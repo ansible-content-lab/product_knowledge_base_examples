@@ -45,57 +45,91 @@
       register: authenticators_result
       ignore_errors: true
 
-    - name: Display authenticators data
-      ansible.builtin.debug:
-        msg: "{{ authenticators_result.json | to_nice_json }}"
-      when: authenticators_result is succeeded
-
-    - name: Save authenticators to variable for output
-      ansible.builtin.set_fact:
-        collected_data:
-          authenticators: "{{ authenticators_result.json | default({}) }}"
-
     # ========================================
-    # 2. Collect All Users
+    # 1a. Get Authenticator Maps
     # ========================================
-    - name: Get all users from AAP
+    - name: Get authenticator maps
       ansible.builtin.uri:
-        url: "{{ aap_host }}/api/gateway/v1/users/?page_size=200"
+        url: "{{ aap_host }}/api/gateway/v1/authenticator_maps/"
         method: GET
         user: "{{ aap_username }}"
         password: "{{ aap_password }}"
         force_basic_auth: true
         validate_certs: "{{ validate_certs }}"
         status_code: [200, 201]
-      register: all_users_result
+      register: authenticator_maps_result
       ignore_errors: true
 
-    - name: Display all users summary
-      ansible.builtin.debug:
-        msg: "Found {{ all_users_result.json.count | default(0) }} total users"
-      when: all_users_result is succeeded
-
-    - name: Save all users to collected data
+    # ========================================
+    # 1b. Build Authenticator Data with Nested Maps
+    # ========================================
+    - name: Build authenticators with nested maps
       ansible.builtin.set_fact:
-        collected_data: "{{ collected_data | combine({'all_users': all_users_result.json | default({})}) }}"
+        authenticators_with_maps: >-
+          {{
+            authenticators_with_maps | default([]) + [{
+              'authenticator': item,
+              'maps': authenticator_maps_result.json.results | default([]) | selectattr('authenticator', 'equalto', item.id) | list
+            }]
+          }}
+      loop: "{{ authenticators_result.json.results | default([]) }}"
+      loop_control:
+        label: "{{ item.name | default('Unknown') }}"
+      when: authenticators_result is succeeded
+
+    - name: Display authenticators with maps
+      ansible.builtin.debug:
+        msg: "{{ authenticators_with_maps | to_nice_json }}"
+      when: authenticators_with_maps is defined
+
+    - name: Save authenticators to variable for output
+      ansible.builtin.set_fact:
+        collected_data:
+          authenticators:
+            count: "{{ authenticators_result.json.count | default(0) }}"
+            results: "{{ authenticators_with_maps | default([]) }}"
 
     # ========================================
-    # 3. Collect Detailed User Information
+    # 2. Get User List (lightweight - usernames only)
     # ========================================
-    - name: Determine users to investigate
+    - name: Get basic user list from AAP
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/gateway/v1/users/?page_size=200&fields=username"
+        method: GET
+        user: "{{ aap_username }}"
+        password: "{{ aap_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ validate_certs }}"
+        status_code: [200, 201]
+      register: all_users_list
+      ignore_errors: true
+
+    - name: Display user count
+      ansible.builtin.debug:
+        msg: "Found {{ all_users_list.json.count | default(0) }} total users in system"
+      when: all_users_list is succeeded
+
+    # ========================================
+    # 3. Determine Which Users to Investigate
+    # ========================================
+    - name: Determine users to investigate in detail
       ansible.builtin.set_fact:
         users_to_investigate: >-
           {{
             target_users if target_users | length > 0
-            else all_users_result.json.results | default([]) | map(attribute='username') | list
+            else all_users_list.json.results | default([]) | map(attribute='username') | list
           }}
-      when: all_users_result is succeeded
+      when: all_users_list is succeeded
 
-    - name: Initialize user details dictionary
-      ansible.builtin.set_fact:
-        user_details: {}
+    - name: Display investigation scope
+      ansible.builtin.debug:
+        msg: "Will collect detailed information for {{ users_to_investigate | length }} users"
+      when: users_to_investigate is defined
 
-    - name: Get detailed information for each user
+    # ========================================
+    # 4. Collect Detailed User Information
+    # ========================================
+    - name: Get detailed user information (includes associated_authenticators)
       ansible.builtin.uri:
         url: "{{ aap_host }}/api/gateway/v1/users/?username={{ item }}"
         method: GET
@@ -107,18 +141,18 @@
       register: user_detail_result
       loop: "{{ users_to_investigate }}"
       when: users_to_investigate is defined
+      loop_control:
+        label: "{{ item }}"
       ignore_errors: true
 
-    - name: Get user authenticators for each user
-      ansible.builtin.uri:
-        url: "{{ aap_host }}/api/gateway/v1/users/{{ item.json.results[0].id }}/authenticators/"
-        method: GET
-        user: "{{ aap_username }}"
-        password: "{{ aap_password }}"
-        force_basic_auth: true
-        validate_certs: "{{ validate_certs }}"
-        status_code: [200, 201]
-      register: user_authenticators_result
+    - name: Build user details dictionary
+      ansible.builtin.set_fact:
+        user_details: >-
+          {{
+            user_details | default({}) | combine({
+              item.json.results[0].username: item.json.results[0]
+            })
+          }}
       loop: "{{ user_detail_result.results }}"
       when:
         - user_detail_result is defined
@@ -128,31 +162,12 @@
         label: "{{ item.json.results[0].username | default('unknown') }}"
       ignore_errors: true
 
-    - name: Build user details structure
-      ansible.builtin.set_fact:
-        user_details: >-
-          {{
-            user_details | combine({
-              item.item.json.results[0].username: {
-                'user_info': item.item.json.results[0],
-                'authenticators': item.json
-              }
-            })
-          }}
-      loop: "{{ user_authenticators_result.results }}"
-      when:
-        - user_authenticators_result is defined
-        - item is succeeded
-      loop_control:
-        label: "{{ item.item.json.results[0].username | default('unknown') }}"
-      ignore_errors: true
-
     - name: Save user details to collected data
       ansible.builtin.set_fact:
-        collected_data: "{{ collected_data | combine({'user_details': user_details}) }}"
+        collected_data: "{{ collected_data | combine({'user_details': user_details | default({})}) }}"
 
     # ========================================
-    # 4. Collect Service Index Resources
+    # 5. Collect Service Index Resources
     # ========================================
     - name: Initialize service index data
       ansible.builtin.set_fact:
@@ -197,7 +212,7 @@
         collected_data: "{{ collected_data | combine({'service_index_resources': service_index_resources}) }}"
 
     # ========================================
-    # 5. Collect Service Metadata
+    # 6. Collect Service Metadata
     # ========================================
     - name: Get service metadata for each service
       ansible.builtin.uri:
@@ -235,26 +250,6 @@
         collected_data: "{{ collected_data | combine({'service_metadata': service_metadata | default({})}) }}"
 
     # ========================================
-    # 6. Get Authenticator Maps
-    # ========================================
-    - name: Get authenticator maps
-      ansible.builtin.uri:
-        url: "{{ aap_host }}/api/gateway/v1/authenticator_maps/"
-        method: GET
-        user: "{{ aap_username }}"
-        password: "{{ aap_password }}"
-        force_basic_auth: true
-        validate_certs: "{{ validate_certs }}"
-        status_code: [200, 201]
-      register: authenticator_maps_result
-      ignore_errors: true
-
-    - name: Save authenticator maps to collected data
-      ansible.builtin.set_fact:
-        collected_data: "{{ collected_data | combine({'authenticator_maps': authenticator_maps_result.json | default({})}) }}"
-      when: authenticator_maps_result is succeeded
-
-    # ========================================
     # 7. Display Complete Data Collection
     # ========================================
     - name: Display complete collected data
@@ -271,17 +266,15 @@
           - "Collection Timestamp: {{ ansible_date_time.iso8601 | default('N/A') }}"
           - ""
           - "Authenticators Found: {{ collected_data.authenticators.count | default(0) }}"
-          - "Total Users Found: {{ collected_data.all_users.count | default(0) }}"
-          - "Users Investigated: {{ user_details.keys() | list | length }}"
+          - "Total Users in System: {{ all_users_list.json.count | default(0) }}"
+          - "Users Investigated (detailed): {{ user_details.keys() | list | length }}"
           - "Services Queried: {{ services | map(attribute='name') | list | join(', ') }}"
           - ""
           - "Data collected for troubleshooting:"
-          - "  - Authenticators configuration"
-          - "  - All users list"
-          - "  - Detailed user information with authenticators"
+          - "  - Authenticators configuration with maps"
+          - "  - Detailed user information (with associated_authenticators)"
           - "  - Service index resources per user"
           - "  - Service metadata for all services"
-          - "  - Authenticator maps"
           - "=========================================="
 
     # ========================================
