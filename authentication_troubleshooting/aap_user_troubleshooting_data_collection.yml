@@ -35,7 +35,7 @@
     # ========================================
     - name: Get all authenticators configuration
       ansible.builtin.uri:
-        url: "https://{{ aap_host }}/api/gateway/v1/authenticators/?format=json"
+        url: "{{ aap_host }}/api/gateway/v1/authenticators/?format=json"
         method: GET
         user: "{{ aap_username }}"
         password: "{{ aap_password }}"
@@ -60,7 +60,7 @@
     # ========================================
     - name: Get all users from AAP
       ansible.builtin.uri:
-        url: "https://{{ aap_host }}/api/gateway/v1/users/?page_size=200"
+        url: "{{ aap_host }}/api/gateway/v1/users/?page_size=200"
         method: GET
         user: "{{ aap_username }}"
         password: "{{ aap_password }}"
@@ -97,7 +97,7 @@
 
     - name: Get detailed information for each user
       ansible.builtin.uri:
-        url: "https://{{ aap_host }}/api/gateway/v1/users/?username={{ item }}"
+        url: "{{ aap_host }}/api/gateway/v1/users/?username={{ item }}"
         method: GET
         user: "{{ aap_username }}"
         password: "{{ aap_password }}"
@@ -111,7 +111,7 @@
 
     - name: Get user authenticators for each user
       ansible.builtin.uri:
-        url: "https://{{ aap_host }}/api/gateway/v1/users/{{ item.json.results[0].id }}/authenticators/"
+        url: "{{ aap_host }}/api/gateway/v1/users/{{ item.json.results[0].id }}/authenticators/"
         method: GET
         user: "{{ aap_username }}"
         password: "{{ aap_password }}"
@@ -160,7 +160,7 @@
 
     - name: Get service-index resources for users (per service)
       ansible.builtin.uri:
-        url: "https://{{ aap_host }}{{ item.0.base_path }}/service-index/resources/?content_type__model=user&name__contains={{ item.1 }}"
+        url: "{{ aap_host }}{{ item.0.base_path }}/service-index/resources/?content_type__model=user&name__contains={{ item.1 }}"
         method: GET
         user: "{{ aap_username }}"
         password: "{{ aap_password }}"
@@ -201,7 +201,7 @@
     # ========================================
     - name: Get service metadata for each service
       ansible.builtin.uri:
-        url: "https://{{ aap_host }}{{ item.base_path }}/service-index/metadata/"
+        url: "{{ aap_host }}{{ item.base_path }}/service-index/metadata/"
         method: GET
         user: "{{ aap_username }}"
         password: "{{ aap_password }}"
@@ -239,7 +239,7 @@
     # ========================================
     - name: Get authenticator maps
       ansible.builtin.uri:
-        url: "https://{{ aap_host }}/api/gateway/v1/authenticator_maps/"
+        url: "{{ aap_host }}/api/gateway/v1/authenticator_maps/"
         method: GET
         user: "{{ aap_username }}"
         password: "{{ aap_password }}"
