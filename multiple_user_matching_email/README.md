@@ -9,8 +9,8 @@ For customers on 2.6, you may now encounter an error when multiple users are fou
 
 Before you begin, please ensure you have the following information:
 
-1.  **Repository URL:** ``
-2.  **Playbook Name:** ``
+1.  **Repository URL:** `https://github.com/ansible-content-lab/product_knowledge_base_examples/`
+2.  **Playbook Name:** `multiple_user_matching_email/duplicate_users_csv.yml`
 3.  **Permissions:** Administrative access to your AAP Automation Execution UI.
 4.  **Credential:** A credential using the AAP Platform credential type
 
@@ -64,4 +64,6 @@ Now you are ready to run the diagnostic test.
 
 * **Next Steps:**
     1.  Review the job output log. The playbook is designed to show *which* users in the system have a record with at least 2 matching email.
-    2.  Use the output to decide on which steps to take when consolidating the user records as per the article
+        * **Note:** Depending on how you retrieve the csv output from the job logs, you may need to remove extraneous characters for the output to be readable in a text file
+    3.  Use the output to decide on which steps to take when consolidating the user records as per the article
+    4.  Note: Blank email address will show as duplicates as well and can be ignored
