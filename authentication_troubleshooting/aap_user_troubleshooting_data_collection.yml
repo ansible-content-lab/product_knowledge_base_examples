@@ -4,9 +4,9 @@
   gather_facts: false
   vars:
     # AAP Configuration
-    aap_host: "{{ controller_host }}"
-    aap_username: "{{ controller_username }}"
-    aap_password: "{{ controller_password }}"
+    aap_host: "{{ lookup('env', 'CONTROLLER_HOST') }}"
+    aap_username: "{{ lookup('env', 'CONTROLLER_USERNAME') }}"
+    aap_password: "{{ lookup('env', 'CONTROLLER_PASSWORD') }}"
     validate_certs: "{{ controller_validate_certs | default(true) }}"
     save_to_file: "{{ save_to_file | default(false) }}"
 
