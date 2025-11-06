@@ -90,11 +90,11 @@
             results: "{{ authenticators_with_maps | default([]) }}"
 
     # ========================================
-    # 2. Get User List (lightweight - usernames only)
+    # 2. Get User List
     # ========================================
-    - name: Get basic user list from AAP
+    - name: Get all users list from AAP
       ansible.builtin.uri:
-        url: "{{ aap_host }}/api/gateway/v1/users/?page_size=200&fields=username"
+        url: "{{ aap_host }}/api/gateway/v1/users/?page_size=200"
         method: GET
         user: "{{ aap_username }}"
         password: "{{ aap_password }}"
@@ -108,6 +108,28 @@
       ansible.builtin.debug:
         msg: "Found {{ all_users_list.json.count | default(0) }} total users in system"
       when: all_users_list is succeeded
+
+    - name: Build simplified user list for display
+      ansible.builtin.set_fact:
+        user_summary_list: >-
+          {{
+            user_summary_list | default([]) + [{
+              'username': item.username,
+              'email': item.email | default(''),
+              'first_name': item.first_name | default(''),
+              'last_name': item.last_name | default(''),
+              'last_login': item.last_login | default('Never')
+            }]
+          }}
+      loop: "{{ all_users_list.json.results | default([]) }}"
+      loop_control:
+        label: "{{ item.username }}"
+      when: all_users_list is succeeded
+
+    - name: Display basic user information
+      ansible.builtin.debug:
+        var: user_summary_list
+      when: user_summary_list is defined
 
     # ========================================
     # 3. Determine Which Users to Investigate
