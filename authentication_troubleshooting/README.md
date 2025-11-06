@@ -184,3 +184,5 @@ This playbook addresses the specific API endpoints requested in **AAP-56517**:
 - Review collected data before sharing externally
 - If saving to file, delete JSON output files after analysis
 - Files are saved to `/tmp/` which may be cleared on reboot
+
+Co-authored by: Claude Code
