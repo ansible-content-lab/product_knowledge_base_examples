@@ -4,7 +4,7 @@
 # Targets: All automation controllers and execution nodes
 # Reference: https://access.redhat.com/solutions/XXXXXX
 - name: AAP Receptor CRYPTO_BUFFER_EXCEEDED Fix (Containerized)
-  hosts: automationcontroller:execution_nodes
+  hosts: execution_nodes
   gather_facts: true
   vars:
     mesh_ca_cert_path: "{{ ansible_env.HOME }}/aap/receptor/etc/mesh-CA.crt"
