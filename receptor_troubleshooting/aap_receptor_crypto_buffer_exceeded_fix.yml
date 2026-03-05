@@ -1,0 +1,87 @@
+---
+# Resolves: CRYPTO_BUFFER_EXCEEDED (local): received invalid offset on crypto stream
+# Applies to: AAP 2.5 containerized installs
+# Targets: All automation controllers and execution nodes
+# Reference: https://access.redhat.com/solutions/XXXXXX
+- name: AAP Receptor CRYPTO_BUFFER_EXCEEDED Fix (Containerized)
+  hosts: automationcontroller:execution_nodes
+  gather_facts: true
+  vars:
+    mesh_ca_cert_path: "{{ ansible_env.HOME }}/aap/receptor/etc/mesh-CA.crt"
+
+  tasks:
+    # ========================================
+    # 1. Validate Certificate File
+    # ========================================
+    - name: Verify mesh-CA.crt exists
+      ansible.builtin.stat:
+        path: "{{ mesh_ca_cert_path }}"
+      register: cert_stat
+
+    - name: Fail if mesh-CA.crt is missing
+      ansible.builtin.fail:
+        msg: "mesh-CA.crt not found at {{ mesh_ca_cert_path }}. Verify receptor is installed on this host."
+      when: not cert_stat.stat.exists
+
+    - name: Read mesh-CA.crt contents
+      ansible.builtin.slurp:
+        src: "{{ mesh_ca_cert_path }}"
+      register: mesh_ca_content
+
+    - name: Count certificates in mesh-CA.crt
+      ansible.builtin.set_fact:
+        cert_count: "{{ (mesh_ca_content.content | b64decode).split('-----BEGIN CERTIFICATE-----') | length - 1 }}"
+
+    - name: Display certificate count
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ cert_count }} certificate(s) found in {{ mesh_ca_cert_path }}"
+
+    # ========================================
+    # 2. Back Up and Trim Certificate File
+    # ========================================
+    - name: Back up mesh-CA.crt
+      ansible.builtin.copy:
+        src: "{{ mesh_ca_cert_path }}"
+        dest: "{{ mesh_ca_cert_path }}-{{ ansible_date_time.date }}"
+        remote_src: true
+        mode: preserve
+
+    - name: Extract first certificate from mesh-CA.crt
+      ansible.builtin.set_fact:
+        first_cert: >-
+          {{
+            (mesh_ca_content.content | b64decode).split('-----END CERTIFICATE-----')[0]
+            + '-----END CERTIFICATE-----'
+          }}
+
+    - name: Write trimmed mesh-CA.crt
+      ansible.builtin.copy:
+        content: "{{ first_cert }}\n"
+        dest: "{{ mesh_ca_cert_path }}"
+        mode: "0644"
+
+    # ========================================
+    # 3. Restart Receptor
+    # ========================================
+    - name: Restart receptor
+      ansible.builtin.systemd:
+        name: receptor
+        state: restarted
+        scope: user
+
+    - name: Wait for receptor to start
+      ansible.builtin.wait_for:
+        timeout: 10
+
+    - name: Verify receptor is running
+      ansible.builtin.systemd:
+        name: receptor
+        scope: user
+      register: receptor_status
+      failed_when: receptor_status.status.ActiveState != 'active'
+
+    - name: Display result
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: Fix applied. Receptor status: {{ receptor_status.status.ActiveState }}"
+
+# Co-authored by: Claude Code
