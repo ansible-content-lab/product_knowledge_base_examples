@@ -1,0 +1,259 @@
+---
+#
+# Usage: Run via AAP Job Template with extra variable:
+#
+#   user_role_mappings:
+#     - from_user_id: 1
+#       to_user_id: 2
+#     - from_user_id: 3
+#       to_user_id: 4
+#
+# This playbook retrieves ALL role assignments (org, team, and resource-level roles)
+# from each source user and copies them to the corresponding target user.
+#
+- name: Copy role assignments between users
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    aap_host: "{{ lookup('env', 'CONTROLLER_HOST') }}"
+    aap_username: "{{ lookup('env', 'CONTROLLER_USERNAME') }}"
+    aap_password: "{{ lookup('env', 'CONTROLLER_PASSWORD') }}"
+    aap_validate_certs: "{{ controller_validate_certs | default(true) }}"
+
+  tasks:
+    # ========================================
+    # 1. Validate Input
+    # ========================================
+    - name: Validate user_role_mappings is provided
+      ansible.builtin.assert:
+        that:
+          - user_role_mappings is defined
+          - user_role_mappings | length > 0
+        fail_msg: >-
+          You must define 'user_role_mappings' as a list of from/to pairs, e.g.:
+          user_role_mappings:
+            - from_user_id: 1
+              to_user_id: 2
+
+    - name: Validate each mapping has required fields
+      ansible.builtin.assert:
+        that:
+          - item.from_user_id is defined
+          - item.to_user_id is defined
+          - item.from_user_id != item.to_user_id
+        fail_msg: "Each mapping must have from_user_id and to_user_id (and they must differ)"
+      loop: "{{ user_role_mappings }}"
+      loop_control:
+        label: "{{ item.from_user_id | default('?') }} -> {{ item.to_user_id | default('?') }}"
+
+    # ========================================
+    # 2. Load Users for Display
+    # ========================================
+    - name: Get all users
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/gateway/v1/users/?page_size=200"
+        method: GET
+        user: "{{ aap_username }}"
+        password: "{{ aap_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ aap_validate_certs }}"
+        status_code: [200]
+      register: all_users_result
+
+    - name: Build user lookup by ID
+      ansible.builtin.set_fact:
+        users_by_id: >-
+          {{
+            users_by_id | default({}) | combine({
+              item.id | string: item.username
+            })
+          }}
+      loop: "{{ all_users_result.json.results }}"
+      loop_control:
+        label: "{{ item.username }}"
+
+    - name: Display mapping summary
+      ansible.builtin.debug:
+        msg: >-
+          Mapping {{ idx + 1 }}:
+          Copy roles from '{{ users_by_id[item.from_user_id | string] | default('Unknown') }}'
+          (ID: {{ item.from_user_id }}) to
+          '{{ users_by_id[item.to_user_id | string] | default('Unknown') }}'
+          (ID: {{ item.to_user_id }})
+      loop: "{{ user_role_mappings }}"
+      loop_control:
+        label: "{{ item.from_user_id }} -> {{ item.to_user_id }}"
+        index_var: idx
+
+    # ========================================
+    # 3. Collect All Role Assignments
+    # ========================================
+    - name: Get all role user assignments (handles pagination)
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/gateway/v1/role_user_assignments/?page_size=200&page={{ page_num }}"
+        method: GET
+        user: "{{ aap_username }}"
+        password: "{{ aap_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ aap_validate_certs }}"
+        status_code: [200]
+      register: role_assignments_page
+      loop: "{{ range(1, max_pages + 1) | list }}"
+      loop_control:
+        loop_var: page_num
+        label: "page {{ page_num }}"
+      vars:
+        max_pages: 10
+      when: >-
+        page_num == 1 or
+        (role_assignments_page.results[page_num - 2] is defined and
+         role_assignments_page.results[page_num - 2].json.next is not none)
+
+    - name: Combine paginated role assignment results
+      ansible.builtin.set_fact:
+        all_role_assignments: >-
+          {{
+            role_assignments_page.results
+            | selectattr('json', 'defined')
+            | map(attribute='json.results')
+            | flatten
+          }}
+
+    - name: Display total role assignments found
+      ansible.builtin.debug:
+        msg: "Found {{ all_role_assignments | length }} total role assignments in the system"
+
+    # ========================================
+    # 4. Get Role Definitions for Reporting
+    # ========================================
+    - name: Get all role definitions
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/gateway/v1/role_definitions/?page_size=200"
+        method: GET
+        user: "{{ aap_username }}"
+        password: "{{ aap_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ aap_validate_certs }}"
+        status_code: [200]
+      register: role_definitions_result
+
+    - name: Build role definition lookup by ID
+      ansible.builtin.set_fact:
+        role_defs_by_id: >-
+          {{
+            role_defs_by_id | default({}) | combine({
+              item.id | string: item
+            })
+          }}
+      loop: "{{ role_definitions_result.json.results }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # ========================================
+    # 5. Build Flat List of Roles to Copy
+    # ========================================
+    - name: Build list of role assignments to copy
+      ansible.builtin.set_fact:
+        roles_to_copy: >-
+          {{
+            roles_to_copy | default([]) +
+            (all_role_assignments
+              | selectattr('user', 'equalto', item.from_user_id)
+              | map('combine', {'to_user_id': item.to_user_id})
+              | list)
+          }}
+      loop: "{{ user_role_mappings }}"
+      loop_control:
+        label: "{{ item.from_user_id }} -> {{ item.to_user_id }}"
+
+    - name: Display roles to be copied
+      ansible.builtin.debug:
+        msg: >-
+          Will copy {{ roles_to_copy | default([]) | length }} role assignment(s)
+          across {{ user_role_mappings | length }} user mapping(s)
+
+    - name: Display role details to be copied
+      ansible.builtin.debug:
+        msg: >-
+          From '{{ users_by_id[item.user | string] | default(item.user) }}'
+          to '{{ users_by_id[item.to_user_id | string] | default(item.to_user_id) }}':
+          {{ role_defs_by_id[item.role_definition | string].name | default('role_def_' + item.role_definition | string) }}
+          on {{ item.content_type | default('N/A') }} (object_id: {{ item.object_id }})
+      loop: "{{ roles_to_copy | default([]) }}"
+      loop_control:
+        label: "{{ item.role_definition }} -> user {{ item.to_user_id }}"
+
+    - name: End play if no roles to copy
+      ansible.builtin.meta: end_play
+      when: roles_to_copy | default([]) | length == 0
+
+    # ========================================
+    # 6. Copy Role Assignments to Target Users
+    # ========================================
+    - name: Create role assignments for target users
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/gateway/v1/role_user_assignments/"
+        method: POST
+        user: "{{ aap_username }}"
+        password: "{{ aap_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ aap_validate_certs }}"
+        body_format: json
+        body:
+          user: "{{ item.to_user_id }}"
+          role_definition: "{{ item.role_definition }}"
+          object_id: "{{ item.object_id }}"
+        status_code:
+          - 201
+          - 400
+      register: copy_results
+      loop: "{{ roles_to_copy }}"
+      loop_control:
+        label: >-
+          {{ role_defs_by_id[item.role_definition | string].name | default(item.role_definition) }}
+          on {{ item.content_type | default('resource') }}:{{ item.object_id }}
+          -> {{ users_by_id[item.to_user_id | string] | default(item.to_user_id) }}
+
+    # ========================================
+    # 7. Report Results
+    # ========================================
+    - name: Count successful and skipped assignments
+      ansible.builtin.set_fact:
+        created_count: "{{ copy_results.results | selectattr('status', 'equalto', 201) | list | length }}"
+        existing_count: "{{ copy_results.results | selectattr('status', 'equalto', 400) | list | length }}"
+
+    - name: Display results summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Role Copy Results"
+          - "=========================================="
+          - "Total role assignments processed: {{ roles_to_copy | length }}"
+          - "Successfully created: {{ created_count }}"
+          - "Already existed (skipped): {{ existing_count }}"
+          - "=========================================="
+
+    - name: Display newly created assignments
+      ansible.builtin.debug:
+        msg: >-
+          CREATED:
+          {{ role_defs_by_id[item.item.role_definition | string].name | default(item.item.role_definition) }}
+          on {{ item.item.content_type | default('resource') }}:{{ item.item.object_id }}
+          for user '{{ users_by_id[item.item.to_user_id | string] | default(item.item.to_user_id) }}'
+      loop: "{{ copy_results.results }}"
+      loop_control:
+        label: "{{ item.item.role_definition }} -> {{ item.item.to_user_id }}"
+      when: item.status == 201
+
+    - name: Display skipped assignments (already existed)
+      ansible.builtin.debug:
+        msg: >-
+          SKIPPED (already exists):
+          {{ role_defs_by_id[item.item.role_definition | string].name | default(item.item.role_definition) }}
+          on {{ item.item.content_type | default('resource') }}:{{ item.item.object_id }}
+          for user '{{ users_by_id[item.item.to_user_id | string] | default(item.item.to_user_id) }}'
+      loop: "{{ copy_results.results }}"
+      loop_control:
+        label: "{{ item.item.role_definition }} -> {{ item.item.to_user_id }}"
+      when: item.status == 400
